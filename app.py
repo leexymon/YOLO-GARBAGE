@@ -587,6 +587,38 @@ def get_region_box_candidates(image: Image.Image, target_label: str, diagnostics
     return suppress_overlapping_candidates(selected_candidates)
 
 
+def get_lite_region_candidates(image: Image.Image, target_label: str):
+    """A very lightweight 2x2 grid scan for stability on Render."""
+    width, height = image.size
+    # 2x2 grid + the whole image = 5 crops
+    grid_entries = [
+        {"box": (0, 0, width, height), "image": image}, # Whole image
+        {"box": (0, 0, width//2, height//2), "image": image.crop((0, 0, width//2, height//2))},
+        {"box": (width//2, 0, width, height//2), "image": image.crop((width//2, 0, width, height//2))},
+        {"box": (0, height//2, width//2, height), "image": image.crop((0, height//2, width//2, height))},
+        {"box": (width//2, height//2, width, height), "image": image.crop((width//2, height//2, width, height))},
+    ]
+    
+    target_class_id = get_class_id_map()[target_label.lower()]
+    fused_probabilities = get_localization_probabilities(
+        [entry["image"] for entry in grid_entries],
+        use_zero_shot=False,
+    )
+    
+    candidates = []
+    for entry, fused_probs in zip(grid_entries, fused_probabilities):
+        target_score = float(fused_probs[target_class_id].item())
+        if target_score > 0.3: # Lower threshold for fallback
+            candidates.append({
+                "box": entry["box"],
+                "confidence": round(target_score * 100, 2),
+                "source": "Lite Scan",
+                "ranking_score": target_score
+            })
+            
+    return sorted(candidates, key=lambda x: x["ranking_score"], reverse=True)[:2]
+
+
 def get_detector_box_candidates(image: Image.Image, target_label: str):
     target_class_id = get_class_id_map()[target_label.lower()]
     with torch.no_grad():
@@ -653,7 +685,15 @@ def get_detector_box_candidates(image: Image.Image, target_label: str):
 def select_bounding_boxes(input_path: Path, target_label: str, diagnostics: dict[str, float | str] | None = None):
     with Image.open(input_path).convert("RGB") as image:
         detector_candidates = get_detector_box_candidates(image, target_label)
-        region_candidates = [] if SMART_LITE else get_region_box_candidates(image, target_label, diagnostics)
+        
+        if SMART_LITE:
+            # If detector fails, use a very lite 2x2 region scan as fallback
+            if not detector_candidates:
+                region_candidates = get_lite_region_candidates(image, target_label)
+            else:
+                region_candidates = []
+        else:
+            region_candidates = get_region_box_candidates(image, target_label, diagnostics)
 
     combined_candidates = detector_candidates + region_candidates
     if not combined_candidates:
