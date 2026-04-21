@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YOLOv8 Waste Recognition</title>
+    <style>
+        :root {
+            --bg-top: #fff6e8;
+            --bg-mid: #f3fbff;
+            --bg-bottom: #eef3ff;
+            --surface: rgba(255, 255, 255, 0.88);
+            --surface-strong: #ffffff;
+            --border: rgba(28, 70, 120, 0.12);
+            --text: #13233f;
+            --muted: #586983;
+            --primary: #ff7a18;
+            --primary-hover: #ef6500;
+            --secondary: #1771f1;
+            --secondary-soft: rgba(23, 113, 241, 0.1);
+            --success: #0f9f6e;
+            --success-soft: rgba(15, 159, 110, 0.12);
+            --danger-bg: #fff1ef;
+            --danger-text: #c2412d;
+            --shadow: 0 24px 60px rgba(16, 33, 63, 0.12);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: "Trebuchet MS", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(255, 122, 24, 0.18), transparent 24%),
+                radial-gradient(circle at top right, rgba(23, 113, 241, 0.18), transparent 28%),
+                linear-gradient(180deg, var(--bg-top), var(--bg-mid) 40%, var(--bg-bottom));
+            min-height: 100vh;
+        }
+
+        main {
+            max-width: 1120px;
+            margin: 0 auto;
+            padding: 40px 20px 56px;
+        }
+
+        h1,
+        h2,
+        h3,
+        p {
+            margin-top: 0;
+        }
+
+        .hero {
+            position: relative;
+            overflow: hidden;
+            margin-bottom: 26px;
+            padding: 34px 34px 28px;
+            border-radius: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.55);
+            background:
+                linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(255, 247, 237, 0.95)),
+                linear-gradient(135deg, rgba(255, 122, 24, 0.08), rgba(23, 113, 241, 0.08));
+            box-shadow: var(--shadow);
+        }
+
+        .hero h1 {
+            font-size: clamp(2rem, 4vw, 2.9rem);
+            margin-bottom: 10px;
+        }
+
+        .hero p {
+            max-width: 760px;
+            color: var(--muted);
+            line-height: 1.65;
+            margin-bottom: 0;
+        }
+
+        .hero::after {
+            content: "";
+            position: absolute;
+            right: -60px;
+            top: -70px;
+            width: 240px;
+            height: 240px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(255, 122, 24, 0.2), rgba(255, 122, 24, 0));
+        }
+
+        .panel {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 28px;
+            box-shadow: var(--shadow);
+            padding: 28px;
+            margin-bottom: 24px;
+            backdrop-filter: blur(10px);
+        }
+
+        .subtle {
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .upload-form {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            align-items: center;
+            margin-top: 18px;
+        }
+
+        .file-input {
+            flex: 1 1 320px;
+            padding: 15px 16px;
+            border-radius: 16px;
+            border: 1px dashed rgba(23, 113, 241, 0.25);
+            background: rgba(23, 113, 241, 0.04);
+            color: var(--text);
+        }
+
+        button {
+            border: none;
+            border-radius: 16px;
+            padding: 14px 22px;
+            color: #ffffff;
+            background: linear-gradient(135deg, var(--primary), #ff9b4a);
+            font-weight: 700;
+            letter-spacing: 0.01em;
+            cursor: pointer;
+            transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease;
+            box-shadow: 0 14px 28px rgba(255, 122, 24, 0.24);
+        }
+
+        button:hover {
+            transform: translateY(-1px);
+            filter: brightness(1.03);
+            box-shadow: 0 18px 32px rgba(255, 122, 24, 0.3);
+        }
+
+        .alert {
+            margin-top: 18px;
+            padding: 14px 18px;
+            border-radius: 16px;
+            background: var(--danger-bg);
+            color: var(--danger-text);
+            border: 1px solid rgba(194, 65, 45, 0.18);
+        }
+
+        .feature-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 18px;
+        }
+
+        .feature-chip {
+            padding: 10px 14px;
+            border-radius: 999px;
+            background: var(--secondary-soft);
+            color: var(--secondary);
+            border: 1px solid rgba(23, 113, 241, 0.12);
+            font-size: 0.94rem;
+            font-weight: 600;
+        }
+
+        .sample-grid,
+        .result-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+            gap: 20px;
+        }
+
+        .figure {
+            position: relative;
+            border: 1px solid var(--border);
+            background: var(--surface-strong);
+            border-radius: 24px;
+            overflow: hidden;
+            box-shadow: 0 16px 38px rgba(15, 35, 63, 0.08);
+        }
+
+        .figure img {
+            display: block;
+            width: 100%;
+            object-fit: contain;
+            background: linear-gradient(180deg, rgba(23, 113, 241, 0.03), rgba(255, 122, 24, 0.03));
+        }
+
+        .figure img {
+            max-height: 460px;
+        }
+
+        .figure figcaption {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 16px 18px 18px;
+            font-weight: 700;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(19, 35, 63, 0.02));
+        }
+
+        .badge-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .badge {
+            padding: 10px 15px;
+            border-radius: 999px;
+            background: var(--success-soft);
+            color: var(--success);
+            border: 1px solid rgba(15, 159, 110, 0.15);
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        .result-header {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 14px;
+        }
+
+        .result-count {
+            padding: 10px 14px;
+            border-radius: 999px;
+            background: var(--secondary-soft);
+            color: var(--secondary);
+            font-weight: 700;
+        }
+
+        footer {
+            text-align: center;
+            color: var(--muted);
+            font-size: 0.95rem;
+            margin-top: 8px;
+        }
+
+        @media (max-width: 640px) {
+            main {
+                padding: 24px 16px 40px;
+            }
+
+            .hero {
+                padding: 26px 22px 24px;
+            }
+
+            .panel {
+                padding: 22px 18px;
+                border-radius: 22px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <section class="hero">
+            <h1>YOLOv8 Waste Recognition with Flask</h1>
+            <p>
+                Upload one trash image and get a more reliable waste prediction from a hybrid system:
+                a custom-trained YOLOv8 classifier for your local dataset plus a zero-shot fallback for
+                external images like plastic bags and plastic containers.
+            </p>
+        </section>
+
+        <section class="panel">
+            <h2>Upload an Image</h2>
+            <p class="subtle">Accepted formats: JPG, JPEG, PNG, BMP, and WEBP. Maximum upload size: 16 MB.</p>
+
+            <form class="upload-form" action="{{ url_for('predict') }}" method="post" enctype="multipart/form-data">
+                <input class="file-input" type="file" name="image" accept=".jpg,.jpeg,.png,.bmp,.webp" required>
+                <button type="submit">Run Prediction</button>
+            </form>
+
+            <div class="feature-row">
+                <span class="feature-chip">Custom-trained waste classifier</span>
+                <span class="feature-chip">Zero-shot external-image fallback</span>
+                <span class="feature-chip">{{ class_count }} trash classes</span>
+                <span class="feature-chip">{{ image_count }} local training images</span>
+            </div>
+
+            {% if error %}
+                <div class="alert">{{ error }}</div>
+            {% endif %}
+
+            {% if not model_ready %}
+                <div class="alert">Custom trash weights were not found yet. Train the model first to get waste-specific predictions.</div>
+            {% endif %}
+        </section>
+
+        {% if original_image and result_image %}
+            <section class="panel">
+                <div class="result-header">
+                    <div>
+                        <h2>Detection Result</h2>
+                        <p class="subtle">
+                            {% if top_prediction %}
+                                The model predicts the highlighted waste region is <strong>{{ top_prediction.label }}</strong>.
+                            {% else %}
+                                The model could not determine a confident waste label for this image.
+                            {% endif %}
+                        </p>
+                        {% if analysis_note %}
+                            <p class="subtle">{{ analysis_note }}</p>
+                        {% endif %}
+                    </div>
+                    {% if top_prediction %}
+                        <span class="result-count">
+                            {{ top_prediction.label }} {{ '%.2f'|format(top_prediction.confidence) }}%
+                        </span>
+                    {% endif %}
+                </div>
+
+                <div class="result-grid">
+                    <figure class="figure">
+                        <img src="{{ original_image }}" alt="Original uploaded image">
+                        <figcaption>
+                            <span>Original Image</span>
+                            <span>Upload Preview</span>
+                        </figcaption>
+                    </figure>
+
+                    <figure class="figure">
+                        <img src="{{ result_image }}" alt="YOLO waste localization result">
+                        <figcaption>
+                            <span>Localized Output</span>
+                            <span>Hybrid Bounding Boxes</span>
+                        </figcaption>
+                    </figure>
+                </div>
+
+                {% if predictions %}
+                    <div class="badge-list">
+                        {% for prediction in predictions %}
+                            <span class="badge">
+                                {{ prediction.label }} ({{ '%.2f'|format(prediction.confidence) }}%)
+                            </span>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+
+                {% if diagnostics %}
+                    <div class="feature-row">
+                        <span class="feature-chip">Whole image: {{ diagnostics.full_label }}</span>
+                        <span class="feature-chip">Patch vote: {{ diagnostics.patch_vote_label }}</span>
+                        <span class="feature-chip">Patch agreement: {{ '%.0f'|format(diagnostics.patch_vote_ratio) }}%</span>
+                        {% if diagnostics.zero_shot_label %}
+                            <span class="feature-chip">Zero-shot: {{ diagnostics.zero_shot_label }}</span>
+                        {% endif %}
+                        {% if diagnostics.fusion_mode %}
+                            <span class="feature-chip">Fusion: {{ diagnostics.fusion_mode }}</span>
+                        {% endif %}
+                        {% if diagnostics.box_source %}
+                            <span class="feature-chip">Boxes: {{ diagnostics.box_source }}</span>
+                        {% endif %}
+                        {% if box_count %}
+                            <span class="feature-chip">Regions: {{ box_count }}</span>
+                        {% endif %}
+                    </div>
+                {% endif %}
+            </section>
+        {% endif %}
+
+        <footer>Focused on upload, custom trash prediction, and a clearer result image.</footer>
+    </main>
+</body>
+</html>
