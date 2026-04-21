@@ -22,6 +22,7 @@ CUSTOM_MODEL_CANDIDATES = [
     BASE_DIR / "runs" / "classify" / "trash_cls_v2" / "weights" / "best.pt",
 ]
 ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "bmp"}
+SMART_LITE = True  # Set to True for Render/Limited resources
 PATCH_GRID_SIZE = 3
 PATCH_OVERRIDE_RATIO = 0.67
 LOW_CONFIDENCE_THRESHOLD = 0.55
@@ -202,7 +203,8 @@ def get_zero_shot_engine():
 def compute_custom_probabilities_batch(images: list[Image.Image]):
     if not images:
         return []
-    results = get_model()(images, imgsz=INFERENCE_IMAGE_SIZE, verbose=False)
+    with torch.no_grad():
+        results = get_model()(images, imgsz=INFERENCE_IMAGE_SIZE, verbose=False)
     return [result.probs.data.float().cpu() for result in results]
 
 
@@ -269,12 +271,26 @@ def fuse_probability_vectors(custom_probabilities, zero_shot_probabilities, pref
 
 def compute_custom_probabilities(image: Image.Image):
     full_image = image.copy()
-    patches = split_image_into_patches(image)
-
-    full_result = get_model()(full_image, imgsz=INFERENCE_IMAGE_SIZE, verbose=False)[0]
-    patch_results = get_model()([patch for _, patch in patches], imgsz=INFERENCE_IMAGE_SIZE, verbose=False)
-
+    
+    with torch.no_grad():
+        full_result = get_model()(full_image, imgsz=INFERENCE_IMAGE_SIZE, verbose=False)[0]
     full_probs = full_result.probs.data.float().cpu()
+
+    if SMART_LITE:
+        full_top_class_id = int(full_result.probs.top1)
+        full_top_class_label = format_class_label(get_model().names.get(full_top_class_id, str(full_top_class_id)))
+        
+        diagnostics = {
+            "custom_label": full_top_class_label,
+            "full_label": full_top_class_label,
+            "analysis_mode": "Single Pass",
+        }
+        return full_probs, "Fast whole-image analysis was used for efficiency.", diagnostics
+
+    patches = split_image_into_patches(image)
+    with torch.no_grad():
+        patch_results = get_model()([patch for _, patch in patches], imgsz=INFERENCE_IMAGE_SIZE, verbose=False)
+
     patch_probabilities = [result.probs.data.float().cpu() for result in patch_results]
     patch_average = sum(patch_probabilities) / len(patch_probabilities)
 
@@ -573,7 +589,8 @@ def get_region_box_candidates(image: Image.Image, target_label: str, diagnostics
 
 def get_detector_box_candidates(image: Image.Image, target_label: str):
     target_class_id = get_class_id_map()[target_label.lower()]
-    detection_result = get_detector_model()(image, verbose=False)[0]
+    with torch.no_grad():
+        detection_result = get_detector_model()(image, verbose=False)[0]
     if detection_result.boxes is None or len(detection_result.boxes) == 0:
         return []
 
@@ -636,7 +653,7 @@ def get_detector_box_candidates(image: Image.Image, target_label: str):
 def select_bounding_boxes(input_path: Path, target_label: str, diagnostics: dict[str, float | str] | None = None):
     with Image.open(input_path).convert("RGB") as image:
         detector_candidates = get_detector_box_candidates(image, target_label)
-        region_candidates = get_region_box_candidates(image, target_label, diagnostics)
+        region_candidates = [] if SMART_LITE else get_region_box_candidates(image, target_label, diagnostics)
 
     combined_candidates = detector_candidates + region_candidates
     if not combined_candidates:
