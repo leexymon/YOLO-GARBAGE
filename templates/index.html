@@ -3,373 +3,480 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YOLOv8 Waste Recognition</title>
+    <title>EcoSort AI // Vision System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-top: #fff6e8;
-            --bg-mid: #f3fbff;
-            --bg-bottom: #eef3ff;
-            --surface: rgba(255, 255, 255, 0.88);
-            --surface-strong: #ffffff;
-            --border: rgba(28, 70, 120, 0.12);
-            --text: #13233f;
-            --muted: #586983;
-            --primary: #ff7a18;
-            --primary-hover: #ef6500;
-            --secondary: #1771f1;
-            --secondary-soft: rgba(23, 113, 241, 0.1);
-            --success: #0f9f6e;
-            --success-soft: rgba(15, 159, 110, 0.12);
-            --danger-bg: #fff1ef;
-            --danger-text: #c2412d;
-            --shadow: 0 24px 60px rgba(16, 33, 63, 0.12);
+            --bg: #050a08;
+            --surface: #0a1410;
+            --surface-hover: #11211a;
+            --border: rgba(0, 250, 154, 0.15);
+            --accent: #00fa9a;
+            --accent-dim: rgba(0, 250, 154, 0.1);
+            --text: #e2e8f0;
+            --text-dim: #94a3b8;
+            --danger: #ff4d4d;
         }
 
-        * {
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
 
         body {
-            margin: 0;
-            font-family: "Trebuchet MS", "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Inter', sans-serif;
+            background-color: var(--bg);
             color: var(--text);
-            background:
-                radial-gradient(circle at top left, rgba(255, 122, 24, 0.18), transparent 24%),
-                radial-gradient(circle at top right, rgba(23, 113, 241, 0.18), transparent 28%),
-                linear-gradient(180deg, var(--bg-top), var(--bg-mid) 40%, var(--bg-bottom));
+            display: flex;
             min-height: 100vh;
+            overflow-x: hidden;
+            line-height: 1.5;
         }
 
-        main {
-            max-width: 1120px;
-            margin: 0 auto;
-            padding: 40px 20px 56px;
-        }
+        h1, h2, h3, .accent-font { font-family: 'Space Grotesk', sans-serif; }
 
-        h1,
-        h2,
-        h3,
-        p {
-            margin-top: 0;
-        }
-
-        .hero {
-            position: relative;
-            overflow: hidden;
-            margin-bottom: 26px;
-            padding: 34px 34px 28px;
-            border-radius: 30px;
-            border: 1px solid rgba(255, 255, 255, 0.55);
-            background:
-                linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(255, 247, 237, 0.95)),
-                linear-gradient(135deg, rgba(255, 122, 24, 0.08), rgba(23, 113, 241, 0.08));
-            box-shadow: var(--shadow);
-        }
-
-        .hero h1 {
-            font-size: clamp(2rem, 4vw, 2.9rem);
-            margin-bottom: 10px;
-        }
-
-        .hero p {
-            max-width: 760px;
-            color: var(--muted);
-            line-height: 1.65;
-            margin-bottom: 0;
-        }
-
-        .hero::after {
-            content: "";
-            position: absolute;
-            right: -60px;
-            top: -70px;
-            width: 240px;
-            height: 240px;
-            border-radius: 50%;
-            background: radial-gradient(circle, rgba(255, 122, 24, 0.2), rgba(255, 122, 24, 0));
-        }
-
-        .panel {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 28px;
-            box-shadow: var(--shadow);
-            padding: 28px;
-            margin-bottom: 24px;
-            backdrop-filter: blur(10px);
-        }
-
-        .subtle {
-            color: var(--muted);
-            line-height: 1.6;
-        }
-
-        .upload-form {
+        /* Loader Overlay */
+        .loader {
+            position: fixed; inset: 0;
+            background: var(--bg);
+            z-index: 1000;
             display: flex;
-            flex-wrap: wrap;
-            gap: 14px;
+            flex-direction: column;
             align-items: center;
-            margin-top: 18px;
+            justify-content: center;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.4s ease;
+        }
+        .loader.active { opacity: 1; pointer-events: all; }
+        
+        .scan-container { position: relative; width: 120px; height: 120px; border: 1px solid var(--border); border-radius: 20px; display: flex; align-items: center; justify-content: center; overflow: hidden; margin-bottom: 2rem;}
+        .scan-line { position: absolute; top: 0; left: 0; width: 100%; height: 2px; background: var(--accent); box-shadow: 0 0 20px var(--accent); animation: scan 1.5s ease-in-out infinite; }
+        
+        @keyframes scan {
+            0% { top: -10%; opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { top: 110%; opacity: 0; }
         }
 
-        .file-input {
-            flex: 1 1 320px;
-            padding: 15px 16px;
-            border-radius: 16px;
-            border: 1px dashed rgba(23, 113, 241, 0.25);
-            background: rgba(23, 113, 241, 0.04);
-            color: var(--text);
-        }
+        .loader h2 { color: var(--accent); letter-spacing: 2px; font-weight: 500; text-transform: uppercase; font-size: 1.2rem;}
 
-        button {
-            border: none;
-            border-radius: 16px;
-            padding: 14px 22px;
-            color: #ffffff;
-            background: linear-gradient(135deg, var(--primary), #ff9b4a);
-            font-weight: 700;
-            letter-spacing: 0.01em;
-            cursor: pointer;
-            transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease;
-            box-shadow: 0 14px 28px rgba(255, 122, 24, 0.24);
-        }
-
-        button:hover {
-            transform: translateY(-1px);
-            filter: brightness(1.03);
-            box-shadow: 0 18px 32px rgba(255, 122, 24, 0.3);
-        }
-
-        .alert {
-            margin-top: 18px;
-            padding: 14px 18px;
-            border-radius: 16px;
-            background: var(--danger-bg);
-            color: var(--danger-text);
-            border: 1px solid rgba(194, 65, 45, 0.18);
-        }
-
-        .feature-row {
+        /* Left Panel - Fixed Branding */
+        .hero-panel {
+            width: 45vw;
+            position: fixed;
+            top: 0; left: 0; height: 100vh;
             display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-            margin-top: 18px;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 4vw;
+            background: radial-gradient(circle at top left, rgba(0, 250, 154, 0.05) 0%, transparent 50%), var(--surface);
+            border-right: 1px solid var(--border);
+            z-index: 10;
         }
 
-        .feature-chip {
-            padding: 10px 14px;
-            border-radius: 999px;
-            background: var(--secondary-soft);
-            color: var(--secondary);
-            border: 1px solid rgba(23, 113, 241, 0.12);
-            font-size: 0.94rem;
-            font-weight: 600;
+        .brand-badge {
+            display: inline-flex;
+            align-items: center;
+            padding: 0.5rem 1.2rem;
+            border: 1px solid var(--accent);
+            color: var(--accent);
+            border-radius: 100px;
+            font-size: 0.85rem;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            align-self: flex-start;
+            background: rgba(0, 250, 154, 0.05);
         }
 
-        .sample-grid,
-        .result-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
-            gap: 20px;
+        .brand-badge::before {
+            content: ''; display: inline-block; width: 8px; height: 8px; background: var(--accent); border-radius: 50%; margin-right: 10px; box-shadow: 0 0 10px var(--accent); animation: pulse 2s infinite;
         }
 
-        .figure {
-            position: relative;
-            border: 1px solid var(--border);
-            background: var(--surface-strong);
-            border-radius: 24px;
-            overflow: hidden;
-            box-shadow: 0 16px 38px rgba(15, 35, 63, 0.08);
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+
+        .hero-content { margin-top: auto; margin-bottom: auto; }
+
+        .hero-panel h1 {
+            font-size: clamp(3.5rem, 6vw, 6rem);
+            line-height: 0.95;
+            margin-bottom: 2rem;
+            text-transform: uppercase;
+            background: linear-gradient(180deg, #ffffff 0%, rgba(255,255,255,0.3) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.04em;
         }
 
-        .figure img {
+        .hero-panel h1 span {
             display: block;
+            color: var(--accent);
+            -webkit-text-fill-color: var(--accent);
+            text-shadow: 0 0 40px rgba(0, 250, 154, 0.4);
+        }
+
+        .hero-panel p {
+            font-size: 1.25rem;
+            color: var(--text-dim);
+            max-width: 450px;
+            line-height: 1.6;
+            font-weight: 300;
+        }
+
+        .hero-footer {
+            display: flex; gap: 2rem; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 2rem;
+        }
+        
+        .stat { display: flex; flex-direction: column; }
+        .stat-val { font-family: 'Space Grotesk', sans-serif; font-size: 1.5rem; color: #fff; font-weight: 700;}
+        .stat-lbl { font-size: 0.8rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;}
+
+        /* Right Panel - Scrollable Content */
+        .content-panel {
+            width: 55vw;
+            margin-left: 45vw;
+            padding: 4vw;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .interactive-card {
+            background: rgba(255,255,255,0.01);
+            border: 1px solid var(--border);
+            border-radius: 32px;
+            padding: 3.5rem;
+            backdrop-filter: blur(20px);
+            margin-bottom: 2rem;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .interactive-card:hover {
+            border-color: rgba(0, 250, 154, 0.4);
+            box-shadow: 0 20px 80px rgba(0, 0, 0, 0.5), inset 0 0 40px rgba(0, 250, 154, 0.02);
+        }
+
+        /* Upload Zone */
+        .drop-zone {
+            height: 320px;
+            border: 1px dashed rgba(255,255,255,0.2);
+            border-radius: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            background: rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .drop-zone::before {
+            content: ''; position: absolute; inset: 0; background: radial-gradient(circle at center, var(--accent-dim) 0%, transparent 70%); opacity: 0; transition: opacity 0.3s ease;
+        }
+
+        .drop-zone:hover::before, .drop-zone.dragover::before { opacity: 1; }
+        .drop-zone:hover, .drop-zone.dragover { border-color: var(--accent); }
+
+        .drop-zone input {
+            position: absolute; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 10;
+        }
+
+        .drop-zone svg {
+            width: 48px; height: 48px; margin-bottom: 1.5rem; color: var(--accent); transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .drop-zone:hover svg { transform: translateY(-10px) scale(1.1); }
+
+        .drop-zone h3 { font-size: 1.5rem; margin-bottom: 0.5rem; color: #fff; position: relative; z-index: 2;}
+        .drop-zone p { color: var(--text-dim); position: relative; z-index: 2;}
+
+        .file-name {
+            margin-top: 1.5rem; color: var(--bg); background: var(--accent); padding: 0.5rem 1.5rem; border-radius: 100px; font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 0.9rem; position: relative; z-index: 2; display: none; transform: translateY(10px); animation: slideUp 0.3s forwards;
+        }
+
+        @keyframes slideUp { to { transform: translateY(0); opacity: 1; } }
+        .file-name.active { display: inline-block; }
+
+        .action-btn {
+            background: var(--text);
+            color: var(--bg);
+            border: none;
+            padding: 1.5rem;
+            font-family: 'Space Grotesk', sans-serif;
+            font-weight: 700;
+            font-size: 1.1rem;
+            border-radius: 20px;
+            cursor: pointer;
+            margin-top: 2rem;
             width: 100%;
-            object-fit: contain;
-            background: linear-gradient(180deg, rgba(23, 113, 241, 0.03), rgba(255, 122, 24, 0.03));
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
         }
 
-        .figure img {
-            max-height: 460px;
+        .action-btn::before {
+            content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: var(--accent); transform: scaleX(0); transform-origin: right; transition: transform 0.4s cubic-bezier(0.19, 1, 0.22, 1); z-index: 1;
         }
 
-        .figure figcaption {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 10px;
-            padding: 16px 18px 18px;
-            font-weight: 700;
-            background: linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(19, 35, 63, 0.02));
+        .action-btn:hover::before { transform: scaleX(1); transform-origin: left; }
+        .action-btn span { position: relative; z-index: 2; transition: color 0.3s; }
+        .action-btn:hover span { color: var(--bg); }
+        .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .action-btn:disabled::before { display: none; }
+
+        /* Alert */
+        .alert {
+            padding: 1.2rem; border-radius: 16px; margin-top: 2rem; display: flex; align-items: flex-start; gap: 1rem; border: 1px solid rgba(255, 165, 0, 0.3); background: rgba(255, 165, 0, 0.05); color: #ffb700; font-size: 0.95rem; line-height: 1.5;
         }
 
-        .badge-list {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-top: 20px;
-        }
-
-        .badge {
-            padding: 10px 15px;
-            border-radius: 999px;
-            background: var(--success-soft);
-            color: var(--success);
-            border: 1px solid rgba(15, 159, 110, 0.15);
-            font-size: 0.95rem;
-            font-weight: 600;
-        }
-
+        /* Results Section */
         .result-header {
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            margin-bottom: 14px;
+            display: flex; flex-direction: column; gap: 1rem; margin-bottom: 3rem;
         }
 
-        .result-count {
-            padding: 10px 14px;
-            border-radius: 999px;
-            background: var(--secondary-soft);
-            color: var(--secondary);
-            font-weight: 700;
+        .result-header h2 { font-size: 1.2rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 2px; }
+        
+        .huge-prediction {
+            font-size: clamp(3rem, 4vw, 4.5rem);
+            color: #fff;
+            line-height: 1;
+            display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap;
         }
 
-        footer {
-            text-align: center;
-            color: var(--muted);
-            font-size: 0.95rem;
-            margin-top: 8px;
+        .huge-prediction span { font-size: 1.5rem; color: var(--accent); font-weight: 400; font-family: 'Inter', sans-serif;}
+
+        .image-compare { display: flex; flex-direction: column; gap: 2rem; }
+
+        .image-box {
+            position: relative; border-radius: 20px; overflow: hidden; border: 1px solid rgba(255,255,255,0.05); background: #000; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
 
-        @media (max-width: 640px) {
-            main {
-                padding: 24px 16px 40px;
-            }
+        .image-box img { width: 100%; display: block; }
+        
+        .image-label {
+            position: absolute; top: 1.5rem; left: 1.5rem; background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 0.5rem 1.2rem; border-radius: 100px; font-family: 'Space Grotesk', sans-serif; font-size: 0.8rem; text-transform: uppercase; backdrop-filter: blur(10px); letter-spacing: 1px;
+        }
 
-            .hero {
-                padding: 26px 22px 24px;
-            }
+        .image-box.output { border-color: var(--accent); }
+        .image-box.output .image-label { border-color: var(--accent); color: var(--accent); background: rgba(0, 250, 154, 0.1); }
 
-            .panel {
-                padding: 22px 18px;
-                border-radius: 22px;
+        .data-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-top: 3rem; }
+
+        .data-card { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); padding: 1.5rem; border-radius: 16px; display: flex; flex-direction: column; gap: 0.5rem;}
+        .data-lbl { font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;}
+        .data-val { font-family: 'Space Grotesk', sans-serif; font-size: 1.2rem; color: #fff;}
+        .data-val.highlight { color: var(--accent); }
+
+        .pill-container { display: flex; flex-wrap: wrap; gap: 0.8rem; margin-top: 1rem; }
+        .pill { background: transparent; border: 1px solid rgba(255,255,255,0.1); color: var(--text); padding: 0.6rem 1.2rem; border-radius: 100px; font-size: 0.9rem; }
+        .pill.accent { border-color: var(--accent); background: rgba(0, 250, 154, 0.05); color: var(--accent); }
+
+        @media (max-width: 968px) {
+            body { flex-direction: column; }
+            .hero-panel {
+                width: 100%; position: relative; height: auto; min-height: 40vh;
+                border-right: none; border-bottom: 1px solid var(--border);
+                padding: 3rem 2rem;
             }
+            .content-panel { width: 100%; margin-left: 0; padding: 2rem; }
+            .hero-panel h1 { font-size: 3.5rem; }
+            .interactive-card { padding: 2rem; }
         }
     </style>
 </head>
 <body>
-    <main>
-        <section class="hero">
-            <h1>YOLOv8 Waste Recognition with Flask</h1>
-            <p>
-                Upload one trash image and get a more reliable waste prediction from a hybrid system:
-                a custom-trained YOLOv8 classifier for your local dataset plus a zero-shot fallback for
-                external images like plastic bags and plastic containers.
-            </p>
-        </section>
 
-        <section class="panel">
-            <h2>Upload an Image</h2>
-            <p class="subtle">Accepted formats: JPG, JPEG, PNG, BMP, and WEBP. Maximum upload size: 16 MB.</p>
+    <!-- Loading Overlay -->
+    <div class="loader" id="loader">
+        <div class="scan-container">
+            <svg style="width: 40px; height: 40px; color: var(--accent);" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"></path></svg>
+            <div class="scan-line"></div>
+        </div>
+        <h2>Processing Image</h2>
+    </div>
 
-            <form class="upload-form" action="{{ url_for('predict') }}" method="post" enctype="multipart/form-data">
-                <input class="file-input" type="file" name="image" accept=".jpg,.jpeg,.png,.bmp,.webp" required>
-                <button type="submit">Run Prediction</button>
+    <!-- Left Panel: Branding & Information -->
+    <aside class="hero-panel">
+        <div class="brand-badge">System Active</div>
+        
+        <div class="hero-content">
+            <h1>Vision<br><span>EcoSort</span></h1>
+            <p>Deploying advanced YOLOv8 neural networks for instantaneous, high-precision waste classification. Upload imagery to initiate sequence.</p>
+        </div>
+
+        <div class="hero-footer">
+            <div class="stat">
+                <span class="stat-val">v8.0</span>
+                <span class="stat-lbl">Architecture</span>
+            </div>
+            <div class="stat">
+                <span class="stat-val">CNN</span>
+                <span class="stat-lbl">Model Type</span>
+            </div>
+            <div class="stat">
+                <span class="stat-val">5</span>
+                <span class="stat-lbl">Classes</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Right Panel: Interaction & Results -->
+    <main class="content-panel">
+        
+        <section class="interactive-card">
+            <form id="uploadForm" action="{{ url_for('predict') }}" method="post" enctype="multipart/form-data">
+                <div class="drop-zone" id="dropZone">
+                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
+                    <h3 class="accent-font">Drop Image Here</h3>
+                    <p>or click to browse local files</p>
+                    <div class="file-name" id="fileNameDisplay"></div>
+                    <input id="fileInput" type="file" name="image" accept=".jpg,.jpeg,.png,.bmp" required>
+                </div>
+                
+                <button type="submit" class="action-btn" id="submitBtn">
+                    <span>Initialize Scan</span>
+                </button>
             </form>
 
-            <div class="feature-row">
-                <span class="feature-chip">Custom-trained waste classifier</span>
-                <span class="feature-chip">Zero-shot external-image fallback</span>
-                <span class="feature-chip">{{ class_count }} trash classes</span>
-                <span class="feature-chip">{{ image_count }} local training images</span>
-            </div>
-
-            {% if error %}
-                <div class="alert">{{ error }}</div>
-            {% endif %}
-
             {% if not model_ready %}
-                <div class="alert">Custom trash weights were not found yet. Train the model first to get waste-specific predictions.</div>
+                <div class="alert">
+                    <svg style="width: 24px; height: 24px; flex-shrink: 0;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                    <div><strong>Model Weights Missing:</strong> The system requires training data. Please execute the training protocol before attempting classification.</div>
+                </div>
             {% endif %}
         </section>
 
         {% if original_image and result_image %}
-            <section class="panel">
+            <section class="interactive-card" id="resultsSection">
                 <div class="result-header">
-                    <div>
-                        <h2>Detection Result</h2>
-                        <p class="subtle">
-                            {% if top_prediction %}
-                                The model predicts the highlighted waste region is <strong>{{ top_prediction.label }}</strong>.
-                            {% else %}
-                                The model could not determine a confident waste label for this image.
-                            {% endif %}
-                        </p>
-                        {% if analysis_note %}
-                            <p class="subtle">{{ analysis_note }}</p>
-                        {% endif %}
-                    </div>
+                    <h2>Analysis Report</h2>
                     {% if top_prediction %}
-                        <span class="result-count">
-                            {{ top_prediction.label }} {{ '%.2f'|format(top_prediction.confidence) }}%
-                        </span>
+                        <div class="huge-prediction accent-font">
+                            {{ top_prediction.label }} 
+                            <span>{{ '%.1f'|format(top_prediction.confidence) }}%</span>
+                        </div>
+                    {% else %}
+                        <div class="huge-prediction accent-font" style="color: var(--text-dim);">
+                            Unknown <span>0.0%</span>
+                        </div>
+                    {% endif %}
+                    
+                    {% if analysis_note %}
+                        <p style="color: var(--text-dim); border-left: 2px solid var(--accent); padding-left: 1rem; margin-top: 1rem;">{{ analysis_note }}</p>
                     {% endif %}
                 </div>
 
-                <div class="result-grid">
-                    <figure class="figure">
-                        <img src="{{ original_image }}" alt="Original uploaded image">
-                        <figcaption>
-                            <span>Original Image</span>
-                            <span>Upload Preview</span>
-                        </figcaption>
-                    </figure>
-
-                    <figure class="figure">
-                        <img src="{{ result_image }}" alt="YOLO waste localization result">
-                        <figcaption>
-                            <span>Localized Output</span>
-                            <span>Hybrid Bounding Boxes</span>
-                        </figcaption>
-                    </figure>
+                <div class="image-compare">
+                    <div class="image-box output">
+                        <span class="image-label">Processed Output</span>
+                        <img src="{{ result_image }}" alt="YOLO Detection">
+                    </div>
+                    <div class="image-box">
+                        <span class="image-label">Source Feed</span>
+                        <img src="{{ original_image }}" alt="Original Image">
+                    </div>
                 </div>
 
                 {% if predictions %}
-                    <div class="badge-list">
-                        {% for prediction in predictions %}
-                            <span class="badge">
-                                {{ prediction.label }} ({{ '%.2f'|format(prediction.confidence) }}%)
-                            </span>
-                        {% endfor %}
+                    <div style="margin-top: 3rem;">
+                        <h2 style="font-size: 1rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 1rem;">Detected Entities</h2>
+                        <div class="pill-container">
+                            {% for prediction in predictions %}
+                                <div class="pill accent">
+                                    {{ prediction.label }} {{ '%.1f'|format(prediction.confidence) }}%
+                                </div>
+                            {% endfor %}
+                        </div>
                     </div>
                 {% endif %}
 
                 {% if diagnostics %}
-                    <div class="feature-row">
-                        <span class="feature-chip">Whole image: {{ diagnostics.full_label }}</span>
-                        <span class="feature-chip">Patch vote: {{ diagnostics.patch_vote_label }}</span>
-                        <span class="feature-chip">Patch agreement: {{ '%.0f'|format(diagnostics.patch_vote_ratio) }}%</span>
+                    <div class="data-grid">
+                        <div class="data-card">
+                            <span class="data-lbl">Image Context</span>
+                            <span class="data-val">{{ diagnostics.full_label }}</span>
+                        </div>
+                        <div class="data-card">
+                            <span class="data-lbl">Patch Consensus</span>
+                            <span class="data-val highlight">{{ '%.0f'|format(diagnostics.patch_vote_ratio) }}%</span>
+                        </div>
                         {% if diagnostics.zero_shot_label %}
-                            <span class="feature-chip">Zero-shot: {{ diagnostics.zero_shot_label }}</span>
-                        {% endif %}
-                        {% if diagnostics.fusion_mode %}
-                            <span class="feature-chip">Fusion: {{ diagnostics.fusion_mode }}</span>
-                        {% endif %}
-                        {% if diagnostics.box_source %}
-                            <span class="feature-chip">Boxes: {{ diagnostics.box_source }}</span>
+                        <div class="data-card">
+                            <span class="data-lbl">Zero-Shot</span>
+                            <span class="data-val">{{ diagnostics.zero_shot_label }}</span>
+                        </div>
                         {% endif %}
                         {% if box_count %}
-                            <span class="feature-chip">Regions: {{ box_count }}</span>
+                        <div class="data-card">
+                            <span class="data-lbl">Bounding Boxes</span>
+                            <span class="data-val">{{ box_count }} Regions</span>
+                        </div>
                         {% endif %}
                     </div>
                 {% endif %}
             </section>
         {% endif %}
 
-        <footer>Focused on upload, custom trash prediction, and a clearer result image.</footer>
     </main>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const fileNameDisplay = document.getElementById('fileNameDisplay');
+        const uploadForm = document.getElementById('uploadForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const loader = document.getElementById('loader');
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault(); e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => dropZone.classList.add('dragover'), false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => dropZone.classList.remove('dragover'), false);
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            const files = e.dataTransfer.files;
+            if (files.length) { fileInput.files = files; updateFileName(files); }
+        }, false);
+
+        fileInput.addEventListener('change', function() { updateFileName(this.files); });
+
+        function updateFileName(files) {
+            if (files && files.length > 0) {
+                fileNameDisplay.textContent = files[0].name;
+                fileNameDisplay.classList.add('active');
+            } else {
+                fileNameDisplay.classList.remove('active');
+            }
+        }
+
+        uploadForm.addEventListener('submit', function() {
+            if(fileInput.files.length > 0) {
+                loader.classList.add('active');
+                submitBtn.disabled = true;
+                submitBtn.querySelector('span').textContent = 'Processing...';
+            }
+        });
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const results = document.getElementById('resultsSection');
+            if (results) { setTimeout(() => { results.scrollIntoView({ behavior: 'smooth' }); }, 300); }
+        });
+    </script>
 </body>
 </html>

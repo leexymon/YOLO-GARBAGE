@@ -26,7 +26,7 @@ CUSTOM_MODEL_CANDIDATES = [
     BASE_DIR / "runs" / "classify" / "trash_cls" / "weights" / "best.pt",
     BASE_DIR / "runs" / "classify" / "trash_cls_v2" / "weights" / "best.pt",
 ]
-ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "bmp", "webp"}
+ALLOWED_EXTENSIONS = {"jpg", "jpeg", "png", "bmp"}
 PATCH_GRID_SIZE = 3
 PATCH_OVERRIDE_RATIO = 0.67
 LOW_CONFIDENCE_THRESHOLD = 0.55
@@ -660,9 +660,6 @@ def create_result_image(
         width, height = image.size
         draw = ImageDraw.Draw(image, "RGBA")
 
-        title_font = load_font(max(24, width // 20), bold=True)
-        subtitle_font = load_font(max(18, width // 32))
-        detail_font = load_font(max(16, width // 40))
         box_font = load_font(max(16, width // 42), bold=True)
         line_width = max(3, min(width, height) // 130)
         for candidate in box_candidates:
@@ -682,43 +679,6 @@ def create_result_image(
                 fill=BOX_FILL,
             )
             draw.text((label_left + 9, label_top + 6), label_text, font=box_font, fill=(255, 255, 255, 255))
-
-        title = str(top_prediction["label"])
-        subtitle = f'{float(top_prediction["confidence"]):.2f}% confidence'
-        detail = (
-            f'{diagnostics["analysis_mode"]} / {diagnostics.get("fusion_mode", "Custom Only")} - '
-            f'Patch agreement {float(diagnostics["patch_vote_ratio"]):.0f}%'
-        )
-
-        title_box = draw.textbbox((0, 0), title, font=title_font)
-        subtitle_box = draw.textbbox((0, 0), subtitle, font=subtitle_font)
-        detail_box = draw.textbbox((0, 0), detail, font=detail_font)
-
-        panel_width = max(title_box[2], subtitle_box[2], detail_box[2]) + 42
-        panel_height = (
-            (title_box[3] - title_box[1])
-            + (subtitle_box[3] - subtitle_box[1])
-            + (detail_box[3] - detail_box[1])
-            + 50
-        )
-        margin = max(18, width // 30)
-
-        draw.rounded_rectangle(
-            (margin, margin, margin + panel_width, margin + panel_height),
-            radius=24,
-            fill=(19, 35, 63, 210),
-            outline=(255, 255, 255, 110),
-            width=2,
-        )
-        draw.rounded_rectangle(
-            (margin, margin, margin + panel_width, margin + 54),
-            radius=24,
-            fill=(255, 122, 24, 235),
-        )
-
-        draw.text((margin + 20, margin + 12), title, font=title_font, fill=(255, 255, 255, 255))
-        draw.text((margin + 20, margin + 62), subtitle, font=subtitle_font, fill=(232, 244, 255, 255))
-        draw.text((margin + 20, margin + 92), detail, font=detail_font, fill=(219, 231, 247, 255))
 
         image.save(output_path)
 
@@ -785,12 +745,6 @@ def predict():
         return render_template(
             "index.html",
             **build_context(error="Please choose an image before running prediction."),
-        )
-
-    if not allowed_file(image_file.filename):
-        return render_template(
-            "index.html",
-            **build_context(error="Unsupported file type. Upload JPG, JPEG, PNG, BMP, or WEBP."),
         )
 
     safe_name = secure_filename(image_file.filename)
