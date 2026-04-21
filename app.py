@@ -1,3 +1,5 @@
+import os
+os.environ['YOLO_CONFIG_DIR'] = '/tmp'
 from pathlib import Path
 from uuid import uuid4
 from collections import Counter
@@ -7,16 +9,9 @@ from PIL import Image, ImageDraw, ImageFont
 from flask import Flask, render_template, request, send_from_directory, url_for
 from ultralytics import YOLO
 from werkzeug.utils import secure_filename
+import torch
 
-try:
-    import torch
-    import open_clip
-
-    ZERO_SHOT_AVAILABLE = True
-except ImportError:
-    torch = None
-    open_clip = None
-    ZERO_SHOT_AVAILABLE = False
+ZERO_SHOT_AVAILABLE = False
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
@@ -82,11 +77,24 @@ app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024
 CUSTOM_MODEL_PATH = next((path for path in CUSTOM_MODEL_CANDIDATES if path.exists()), None)
 MODEL_SOURCE = str(CUSTOM_MODEL_PATH) if CUSTOM_MODEL_PATH else "yolov8n-cls.pt"
 INFERENCE_IMAGE_SIZE = 320 if CUSTOM_MODEL_PATH and "trash_cls_v2" in str(CUSTOM_MODEL_PATH) else 224
-model = YOLO(MODEL_SOURCE)
-detector_model = YOLO(DETECTOR_MODEL_SOURCE)
+
+@lru_cache(maxsize=1)
+def get_model():
+    return YOLO(MODEL_SOURCE)
+
+@lru_cache(maxsize=1)
+def get_detector_model():
+    return YOLO(DETECTOR_MODEL_SOURCE)
+
 IS_CUSTOM_MODEL = CUSTOM_MODEL_PATH is not None
-CLASS_LABEL_TO_ID = {str(name).lower(): int(class_id) for class_id, name in model.names.items()}
-CLASS_ID_TO_LABEL = {int(class_id): str(name).lower() for class_id, name in model.names.items()}
+
+def get_class_id_map():
+    m = get_model()
+    return {str(name).lower(): int(class_id) for class_id, name in m.names.items()}
+
+def get_id_class_map():
+    m = get_model()
+    return {int(class_id): str(name).lower() for class_id, name in m.names.items()}
 
 
 def allowed_file(filename: str) -> bool:
@@ -125,7 +133,7 @@ def probabilities_to_predictions(probabilities, limit: int = 3) -> list[dict[str
     ranked = sorted(enumerate(values), key=lambda item: item[1], reverse=True)[:limit]
     predictions = []
     for class_id, confidence in ranked:
-        label = format_class_label(model.names.get(int(class_id), str(class_id)))
+        label = format_class_label(get_model().names.get(int(class_id), str(class_id)))
         predictions.append({"label": label, "confidence": round(float(confidence) * 100, 2)})
     return predictions
 
@@ -194,7 +202,7 @@ def get_zero_shot_engine():
 def compute_custom_probabilities_batch(images: list[Image.Image]):
     if not images:
         return []
-    results = model(images, imgsz=INFERENCE_IMAGE_SIZE, verbose=False)
+    results = get_model()(images, imgsz=INFERENCE_IMAGE_SIZE, verbose=False)
     return [result.probs.data.float().cpu() for result in results]
 
 
@@ -223,15 +231,15 @@ def compute_zero_shot_probabilities_batch(images: list[Image.Image]):
             class_scores[class_label] = sum(prompt_values) / len(prompt_values)
 
         total_score = sum(class_scores.values()) or 1.0
-        probabilities = torch.zeros(len(CLASS_LABEL_TO_ID), dtype=torch.float32)
+        probabilities = torch.zeros(len(get_class_id_map()), dtype=torch.float32)
         for class_label, score in class_scores.items():
-            class_id = CLASS_LABEL_TO_ID.get(class_label)
+            class_id = get_class_id_map().get(class_label)
             if class_id is not None:
                 probabilities[class_id] = score / total_score
 
         top_class_id = int(torch.argmax(probabilities).item())
         diagnostics = {
-            "zero_shot_label": format_class_label(CLASS_ID_TO_LABEL[top_class_id]),
+            "zero_shot_label": format_class_label(get_id_class_map()[top_class_id]),
             "zero_shot_confidence": round(float(probabilities[top_class_id].item()) * 100, 2),
         }
         probability_list.append(probabilities)
@@ -263,8 +271,8 @@ def compute_custom_probabilities(image: Image.Image):
     full_image = image.copy()
     patches = split_image_into_patches(image)
 
-    full_result = model(full_image, imgsz=INFERENCE_IMAGE_SIZE, verbose=False)[0]
-    patch_results = model([patch for _, patch in patches], imgsz=INFERENCE_IMAGE_SIZE, verbose=False)
+    full_result = get_model()(full_image, imgsz=INFERENCE_IMAGE_SIZE, verbose=False)[0]
+    patch_results = get_model()([patch for _, patch in patches], imgsz=INFERENCE_IMAGE_SIZE, verbose=False)
 
     full_probs = full_result.probs.data.float().cpu()
     patch_probabilities = [result.probs.data.float().cpu() for result in patch_results]
@@ -276,8 +284,8 @@ def compute_custom_probabilities(image: Image.Image):
     patch_vote_ratio = patch_vote_count / len(patch_results)
 
     full_top_class_id = int(full_result.probs.top1)
-    full_top_class_label = format_class_label(model.names.get(full_top_class_id, str(full_top_class_id)))
-    patch_vote_label = format_class_label(model.names.get(patch_vote_class_id, str(patch_vote_class_id)))
+    full_top_class_label = format_class_label(get_model().names.get(full_top_class_id, str(full_top_class_id)))
+    patch_vote_label = format_class_label(get_model().names.get(patch_vote_class_id, str(patch_vote_class_id)))
 
     if patch_vote_ratio >= PATCH_OVERRIDE_RATIO and patch_vote_class_id != full_top_class_id:
         custom_probabilities = patch_average
@@ -505,7 +513,7 @@ def suppress_overlapping_candidates(candidates: list[dict], limit: int = MAX_DIS
 
 
 def get_region_box_candidates(image: Image.Image, target_label: str, diagnostics: dict[str, float | str] | None = None):
-    target_class_id = CLASS_LABEL_TO_ID[target_label.lower()]
+    target_class_id = get_class_id_map()[target_label.lower()]
     region_entries = generate_region_scan_entries(image)
     if not region_entries:
         return []
@@ -528,7 +536,7 @@ def get_region_box_candidates(image: Image.Image, target_label: str, diagnostics
     for entry, fused_probs in zip(region_entries, fused_probabilities):
         target_score = float(fused_probs[target_class_id].item())
         top_class_id = int(torch.argmax(fused_probs).item())
-        top_label = CLASS_ID_TO_LABEL[top_class_id]
+        top_label = get_id_class_map()[top_class_id]
         area_ratio = ((entry["box"][2] - entry["box"][0]) * (entry["box"][3] - entry["box"][1])) / image_area
         max_target_score = max(max_target_score, target_score)
         ranking_score = target_score - area_ratio * 0.16
@@ -564,8 +572,8 @@ def get_region_box_candidates(image: Image.Image, target_label: str, diagnostics
 
 
 def get_detector_box_candidates(image: Image.Image, target_label: str):
-    target_class_id = CLASS_LABEL_TO_ID[target_label.lower()]
-    detection_result = detector_model(image, verbose=False)[0]
+    target_class_id = get_class_id_map()[target_label.lower()]
+    detection_result = get_detector_model()(image, verbose=False)[0]
     if detection_result.boxes is None or len(detection_result.boxes) == 0:
         return []
 
@@ -604,7 +612,7 @@ def get_detector_box_candidates(image: Image.Image, target_label: str):
         fused_probabilities, _ = fuse_probability_vectors(custom_probs, zero_probs)
         target_score = float(fused_probabilities[target_class_id].item())
         top_class_id = int(torch.argmax(fused_probabilities).item())
-        top_label = CLASS_ID_TO_LABEL[top_class_id]
+        top_label = get_id_class_map()[top_class_id]
 
         if top_label != target_label.lower() and target_score < 0.45:
             continue
