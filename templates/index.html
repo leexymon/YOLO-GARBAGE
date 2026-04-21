@@ -402,10 +402,12 @@
                             <span class="data-lbl">Image Context</span>
                             <span class="data-val">{{ diagnostics.full_label }}</span>
                         </div>
+                        {% if diagnostics.patch_vote_ratio is defined %}
                         <div class="data-card">
                             <span class="data-lbl">Patch Consensus</span>
                             <span class="data-val highlight">{{ '%.0f'|format(diagnostics.patch_vote_ratio) }}%</span>
                         </div>
+                        {% endif %}
                         {% if diagnostics.zero_shot_label %}
                         <div class="data-card">
                             <span class="data-lbl">Zero-Shot</span>
