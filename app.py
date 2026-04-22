@@ -88,18 +88,20 @@ CUSTOM_MODEL_PATH = next((path for path in CUSTOM_MODEL_CANDIDATES if path.exist
 MODEL_SOURCE = str(CUSTOM_MODEL_PATH) if CUSTOM_MODEL_PATH else "yolov8n-cls.pt"
 INFERENCE_IMAGE_SIZE = 320 if CUSTOM_MODEL_PATH and "trash_cls_v2" in str(CUSTOM_MODEL_PATH) else 224
 
+@lru_cache(maxsize=1)
 def get_model():
-    """Load the classification model. No cache in SMART_LITE to save RAM."""
-    model = YOLO(MODEL_SOURCE)
+    """Load the classification model and keep it in memory."""
+    model = YOLO(MODEL_SOURCE, task='classify')
     if torch.cuda.is_available():
         model.to('cuda')
     else:
         model.to('cpu')
     return model
 
+@lru_cache(maxsize=1)
 def get_detector_model():
-    """Load the detector model. No cache in SMART_LITE to save RAM."""
-    model = YOLO(DETECTOR_MODEL_SOURCE)
+    """Load the detector model and keep it in memory."""
+    model = YOLO(DETECTOR_MODEL_SOURCE, task='detect')
     if torch.cuda.is_available():
         model.to('cuda')
     else:
@@ -108,10 +110,12 @@ def get_detector_model():
 
 IS_CUSTOM_MODEL = CUSTOM_MODEL_PATH is not None
 
+@lru_cache(maxsize=1)
 def get_class_id_map():
     m = get_model()
     return {str(name).lower(): int(class_id) for class_id, name in m.names.items()}
 
+@lru_cache(maxsize=1)
 def get_id_class_map():
     m = get_model()
     return {int(class_id): str(name).lower() for class_id, name in m.names.items()}
@@ -398,12 +402,11 @@ def combine_probabilities(custom_probabilities, zero_shot_probabilities, custom_
 
 def analyze_image(input_path: Path):
     with Image.open(input_path).convert("RGB") as image:
+        # Downscale immediately to save RAM on high-res images
+        image.thumbnail((800, 800), Image.Resampling.LANCZOS)
+        
         model = get_model()
         custom_probabilities, custom_note, diagnostics = compute_custom_probabilities_with_model(image, model)
-        
-        # Immediate cleanup of classifier
-        del model
-        gc.collect()
         
         zero_shot_probabilities, zero_shot_diagnostics = compute_zero_shot_probabilities(image)
 
@@ -413,26 +416,7 @@ def analyze_image(input_path: Path):
     return combine_probabilities(custom_probabilities, zero_shot_probabilities, custom_note, diagnostics)
 
 
-def compute_custom_probabilities_with_model(image: Image.Image, model):
-    full_image = image.copy()
-    
-    with torch.no_grad():
-        full_result = model(full_image, imgsz=INFERENCE_IMAGE_SIZE, verbose=False)[0]
-    full_probs = full_result.probs.data.float().cpu()
 
-    if SMART_LITE:
-        full_top_class_id = int(full_result.probs.top1)
-        full_top_class_label = format_class_label(model.names.get(full_top_class_id, str(full_top_class_id)))
-        
-        diagnostics = {
-            "custom_label": full_top_class_label,
-            "full_label": full_top_class_label,
-            "analysis_mode": "Single Pass",
-        }
-        return full_probs, "Fast whole-image analysis was used for efficiency.", diagnostics
-
-    # Non-lite path remains similar but needs model passed in (omitted for brevity in this specific fix if not needed)
-    return full_probs, "Standard analysis.", {"analysis_mode": "Default"}
 
 
 def build_connected_patch_components(selected_entries: list[dict]):
@@ -751,11 +735,6 @@ def get_detector_box_candidates(image: Image.Image, target_label: str, threshold
         # Clear memory per tile
         del detection_result
         del crop
-        gc.collect()
-        
-    # Clean up detector immediately before classifier runs
-    del detector_model
-    gc.collect()
 
     if not raw_candidates:
         return []
