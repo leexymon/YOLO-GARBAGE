@@ -766,6 +766,11 @@ def get_detector_box_candidates(image: Image.Image, target_label: str, threshold
     if not deduplicated_candidates:
         return []
 
+    # MEMORY SAFETY: Tiled Detection finds vastly more boxes than before. 
+    # Running the classifier on all of them blows up Render's 512MB RAM.
+    # We cap the evaluation to the most confident boxes (max 10).
+    deduplicated_candidates = sorted(deduplicated_candidates, key=lambda x: x["detector_confidence"], reverse=True)[:MAX_DISPLAY_BOXES + 2]
+
     custom_probabilities = compute_custom_probabilities_batch([candidate["crop"] for candidate in deduplicated_candidates])
     zero_shot_probabilities, _ = compute_zero_shot_probabilities_batch([candidate["crop"] for candidate in deduplicated_candidates])
 
