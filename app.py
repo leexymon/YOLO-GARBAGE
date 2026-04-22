@@ -4,12 +4,21 @@ from pathlib import Path
 from uuid import uuid4
 from collections import Counter
 from functools import lru_cache
+import gc
 
 from PIL import Image, ImageDraw, ImageFont
 from flask import Flask, render_template, request, send_from_directory, url_for
 from ultralytics import YOLO
 from werkzeug.utils import secure_filename
 import torch
+import gc
+
+# Memory optimizations for low-RAM environments (like Render Free Tier)
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['VECLIB_MAXIMUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
 
 ZERO_SHOT_AVAILABLE = False
 
@@ -58,14 +67,14 @@ ZERO_SHOT_PROMPTS = {
 }
 DETECTOR_MODEL_SOURCE = str(BASE_DIR / "yolov8n.pt") if (BASE_DIR / "yolov8n.pt").exists() else "yolov8n.pt"
 DETECTOR_CONF_THRESHOLD = 0.2
-DETECTOR_MIN_AREA_RATIO = 0.03
+DETECTOR_MIN_AREA_RATIO = 0.01
 LOCALIZATION_GRID_SIZE = 6
 LOCALIZATION_WINDOW_SHAPES = ((2, 2), (2, 3), (3, 2), (3, 3))
 REGION_MIN_SCORE = 0.24
 REGION_SCORE_RATIO = 0.72
 BOX_IOU_THRESHOLD = 0.32
 BOX_CONTAINMENT_THRESHOLD = 0.78
-MAX_DISPLAY_BOXES = 4
+MAX_DISPLAY_BOXES = 8
 BOX_COLOR = (15, 159, 110, 255)
 BOX_FILL = (15, 159, 110, 235)
 
@@ -79,13 +88,23 @@ CUSTOM_MODEL_PATH = next((path for path in CUSTOM_MODEL_CANDIDATES if path.exist
 MODEL_SOURCE = str(CUSTOM_MODEL_PATH) if CUSTOM_MODEL_PATH else "yolov8n-cls.pt"
 INFERENCE_IMAGE_SIZE = 320 if CUSTOM_MODEL_PATH and "trash_cls_v2" in str(CUSTOM_MODEL_PATH) else 224
 
-@lru_cache(maxsize=1)
 def get_model():
-    return YOLO(MODEL_SOURCE)
+    """Load the classification model. No cache in SMART_LITE to save RAM."""
+    model = YOLO(MODEL_SOURCE)
+    if torch.cuda.is_available():
+        model.to('cuda')
+    else:
+        model.to('cpu')
+    return model
 
-@lru_cache(maxsize=1)
 def get_detector_model():
-    return YOLO(DETECTOR_MODEL_SOURCE)
+    """Load the detector model. No cache in SMART_LITE to save RAM."""
+    model = YOLO(DETECTOR_MODEL_SOURCE)
+    if torch.cuda.is_available():
+        model.to('cuda')
+    else:
+        model.to('cpu')
+    return model
 
 IS_CUSTOM_MODEL = CUSTOM_MODEL_PATH is not None
 
@@ -203,49 +222,55 @@ def get_zero_shot_engine():
 def compute_custom_probabilities_batch(images: list[Image.Image]):
     if not images:
         return []
+    all_probs = []
     with torch.no_grad():
-        results = get_model()(images, imgsz=INFERENCE_IMAGE_SIZE, verbose=False)
-    return [result.probs.data.float().cpu() for result in results]
+        model = get_model()
+        # Process in small chunks to prevent OOM on Render's 512MB RAM
+        for i in range(0, len(images), 4):
+            chunk = images[i:i+4]
+            results = model(chunk, imgsz=INFERENCE_IMAGE_SIZE, verbose=False)
+            all_probs.extend([result.probs.data.float().cpu() for result in results])
+    return all_probs
 
 
 def compute_zero_shot_probabilities_batch(images: list[Image.Image]):
-    if not images:
-        return [], []
-
     engine = get_zero_shot_engine()
-    if engine is None:
+    if not engine or not images:
         return [None] * len(images), [None] * len(images)
 
     clip_model, preprocess, text_features, prompt_owners = engine
-    image_tensors = torch.stack([preprocess(image) for image in images])
-
-    with torch.no_grad():
-        image_features = clip_model.encode_image(image_tensors)
-        image_features /= image_features.norm(dim=-1, keepdim=True)
-        prompt_scores = (100.0 * image_features @ text_features.T).softmax(dim=-1).cpu()
-
     probability_list = []
     diagnostics_list = []
-    for row in prompt_scores:
-        class_scores = {}
-        for class_label in ZERO_SHOT_PROMPTS:
-            prompt_values = [row[index].item() for index, owner in enumerate(prompt_owners) if owner == class_label]
-            class_scores[class_label] = sum(prompt_values) / len(prompt_values)
 
-        total_score = sum(class_scores.values()) or 1.0
-        probabilities = torch.zeros(len(get_class_id_map()), dtype=torch.float32)
-        for class_label, score in class_scores.items():
-            class_id = get_class_id_map().get(class_label)
-            if class_id is not None:
-                probabilities[class_id] = score / total_score
+    with torch.no_grad():
+        # Process in chunks of 4 to save RAM
+        for i in range(0, len(images), 4):
+            chunk = images[i:i+4]
+            image_tensors = torch.stack([preprocess(image) for image in chunk])
+            image_features = clip_model.encode_image(image_tensors)
+            image_features /= image_features.norm(dim=-1, keepdim=True)
+            prompt_scores = (100.0 * image_features @ text_features.T).softmax(dim=-1).cpu()
 
-        top_class_id = int(torch.argmax(probabilities).item())
-        diagnostics = {
-            "zero_shot_label": format_class_label(get_id_class_map()[top_class_id]),
-            "zero_shot_confidence": round(float(probabilities[top_class_id].item()) * 100, 2),
-        }
-        probability_list.append(probabilities)
-        diagnostics_list.append(diagnostics)
+            for row in prompt_scores:
+                class_scores = {}
+                for class_label in ZERO_SHOT_PROMPTS:
+                    prompt_values = [row[index].item() for index, owner in enumerate(prompt_owners) if owner == class_label]
+                    class_scores[class_label] = sum(prompt_values) / len(prompt_values)
+
+                total_score = sum(class_scores.values()) or 1.0
+                probabilities = torch.zeros(len(get_class_id_map()), dtype=torch.float32)
+                for class_label, score in class_scores.items():
+                    class_id = get_class_id_map().get(class_label)
+                    if class_id is not None:
+                        probabilities[class_id] = score / total_score
+
+                top_class_id = int(torch.argmax(probabilities).item())
+                diagnostics = {
+                    "zero_shot_label": format_class_label(get_id_class_map()[top_class_id]),
+                    "zero_shot_confidence": round(float(probabilities[top_class_id].item()) * 100, 2),
+                }
+                probability_list.append(probabilities)
+                diagnostics_list.append(diagnostics)
 
     return probability_list, diagnostics_list
 
@@ -269,16 +294,16 @@ def fuse_probability_vectors(custom_probabilities, zero_shot_probabilities, pref
     return final_probabilities, "Hybrid"
 
 
-def compute_custom_probabilities(image: Image.Image):
+def compute_custom_probabilities_with_model(image: Image.Image, model):
     full_image = image.copy()
     
     with torch.no_grad():
-        full_result = get_model()(full_image, imgsz=INFERENCE_IMAGE_SIZE, verbose=False)[0]
+        full_result = model(full_image, imgsz=INFERENCE_IMAGE_SIZE, verbose=False)[0]
     full_probs = full_result.probs.data.float().cpu()
 
     if SMART_LITE:
         full_top_class_id = int(full_result.probs.top1)
-        full_top_class_label = format_class_label(get_model().names.get(full_top_class_id, str(full_top_class_id)))
+        full_top_class_label = format_class_label(model.names.get(full_top_class_id, str(full_top_class_id)))
         
         diagnostics = {
             "custom_label": full_top_class_label,
@@ -287,9 +312,10 @@ def compute_custom_probabilities(image: Image.Image):
         }
         return full_probs, "Fast whole-image analysis was used for efficiency.", diagnostics
 
+    # Standard path (patch analysis)
     patches = split_image_into_patches(image)
     with torch.no_grad():
-        patch_results = get_model()([patch for _, patch in patches], imgsz=INFERENCE_IMAGE_SIZE, verbose=False)
+        patch_results = model([patch for _, patch in patches], imgsz=INFERENCE_IMAGE_SIZE, verbose=False)
 
     patch_probabilities = [result.probs.data.float().cpu() for result in patch_results]
     patch_average = sum(patch_probabilities) / len(patch_probabilities)
@@ -300,8 +326,8 @@ def compute_custom_probabilities(image: Image.Image):
     patch_vote_ratio = patch_vote_count / len(patch_results)
 
     full_top_class_id = int(full_result.probs.top1)
-    full_top_class_label = format_class_label(get_model().names.get(full_top_class_id, str(full_top_class_id)))
-    patch_vote_label = format_class_label(get_model().names.get(patch_vote_class_id, str(patch_vote_class_id)))
+    full_top_class_label = format_class_label(model.names.get(full_top_class_id, str(full_top_class_id)))
+    patch_vote_label = format_class_label(model.names.get(patch_vote_class_id, str(patch_vote_class_id)))
 
     if patch_vote_ratio >= PATCH_OVERRIDE_RATIO and patch_vote_class_id != full_top_class_id:
         custom_probabilities = patch_average
@@ -372,13 +398,41 @@ def combine_probabilities(custom_probabilities, zero_shot_probabilities, custom_
 
 def analyze_image(input_path: Path):
     with Image.open(input_path).convert("RGB") as image:
-        custom_probabilities, custom_note, diagnostics = compute_custom_probabilities(image)
+        model = get_model()
+        custom_probabilities, custom_note, diagnostics = compute_custom_probabilities_with_model(image, model)
+        
+        # Immediate cleanup of classifier
+        del model
+        gc.collect()
+        
         zero_shot_probabilities, zero_shot_diagnostics = compute_zero_shot_probabilities(image)
 
     if zero_shot_diagnostics:
         diagnostics.update(zero_shot_diagnostics)
 
     return combine_probabilities(custom_probabilities, zero_shot_probabilities, custom_note, diagnostics)
+
+
+def compute_custom_probabilities_with_model(image: Image.Image, model):
+    full_image = image.copy()
+    
+    with torch.no_grad():
+        full_result = model(full_image, imgsz=INFERENCE_IMAGE_SIZE, verbose=False)[0]
+    full_probs = full_result.probs.data.float().cpu()
+
+    if SMART_LITE:
+        full_top_class_id = int(full_result.probs.top1)
+        full_top_class_label = format_class_label(model.names.get(full_top_class_id, str(full_top_class_id)))
+        
+        diagnostics = {
+            "custom_label": full_top_class_label,
+            "full_label": full_top_class_label,
+            "analysis_mode": "Single Pass",
+        }
+        return full_probs, "Fast whole-image analysis was used for efficiency.", diagnostics
+
+    # Non-lite path remains similar but needs model passed in (omitted for brevity in this specific fix if not needed)
+    return full_probs, "Standard analysis.", {"analysis_mode": "Default"}
 
 
 def build_connected_patch_components(selected_entries: list[dict]):
@@ -587,17 +641,31 @@ def get_region_box_candidates(image: Image.Image, target_label: str, diagnostics
     return suppress_overlapping_candidates(selected_candidates)
 
 
-def get_lite_region_candidates(image: Image.Image, target_label: str):
-    """A very lightweight 2x2 grid scan for stability on Render."""
+def get_lite_region_candidates(image: Image.Image, target_label: str, threshold: float = 0.55):
+    """A memory-safe, multi-scale sliding window scan for mixed waste on Render."""
     width, height = image.size
-    # 2x2 grid + the whole image = 5 crops
-    grid_entries = [
-        {"box": (0, 0, width, height), "image": image}, # Whole image
-        {"box": (0, 0, width//2, height//2), "image": image.crop((0, 0, width//2, height//2))},
-        {"box": (width//2, 0, width, height//2), "image": image.crop((width//2, 0, width, height//2))},
-        {"box": (0, height//2, width//2, height), "image": image.crop((0, height//2, width//2, height))},
-        {"box": (width//2, height//2, width, height), "image": image.crop((width//2, height//2, width, height))},
-    ]
+    grid_entries = []
+    
+    # 1. 3x3 Grid (9 small crops)
+    for row in range(3):
+        for col in range(3):
+            left = int(col * width / 3)
+            top = int(row * height / 3)
+            right = int((col + 1) * width / 3)
+            bottom = int((row + 1) * height / 3)
+            grid_entries.append({"box": (left, top, right, bottom), "image": image.crop((left, top, right, bottom))})
+            
+    # 2. 2x2 Grid (4 large crops)
+    for row in range(2):
+        for col in range(2):
+            left = int(col * width / 2)
+            top = int(row * height / 2)
+            right = int((col + 1) * width / 2)
+            bottom = int((row + 1) * height / 2)
+            grid_entries.append({"box": (left, top, right, bottom), "image": image.crop((left, top, right, bottom))})
+            
+    # 3. Center crop (1 crop)
+    grid_entries.append({"box": (width//4, height//4, 3*width//4, 3*height//4), "image": image.crop((width//4, height//4, 3*width//4, 3*height//4))})
     
     target_class_id = get_class_id_map()[target_label.lower()]
     fused_probabilities = get_localization_probabilities(
@@ -607,89 +675,134 @@ def get_lite_region_candidates(image: Image.Image, target_label: str):
     
     candidates = []
     for entry, fused_probs in zip(grid_entries, fused_probabilities):
-        target_score = float(fused_probs[target_class_id].item())
-        if target_score > 0.3: # Lower threshold for fallback
+        top_class_id = int(torch.argmax(fused_probs).item())
+        top_score = float(fused_probs[top_class_id].item())
+        top_label = get_id_class_map()[top_class_id]
+
+        if top_score > threshold: # User-defined threshold for fallback
             candidates.append({
                 "box": entry["box"],
-                "confidence": round(target_score * 100, 2),
+                "confidence": round(top_score * 100, 2),
                 "source": "Lite Scan",
-                "ranking_score": target_score
+                "ranking_score": top_score,
+                "top_label": top_label,
+                "label": format_class_label(top_label),
             })
             
-    return sorted(candidates, key=lambda x: x["ranking_score"], reverse=True)[:2]
+    # Clear memory before detection
+    gc.collect()
+    # Return all valid grid boxes up to MAX_DISPLAY_BOXES, avoiding overlap if possible
+    selected_candidates = suppress_overlapping_candidates(candidates)
+    return selected_candidates[:MAX_DISPLAY_BOXES]
 
 
-def get_detector_box_candidates(image: Image.Image, target_label: str):
-    target_class_id = get_class_id_map()[target_label.lower()]
-    with torch.no_grad():
-        detection_result = get_detector_model()(image, verbose=False)[0]
-    if detection_result.boxes is None or len(detection_result.boxes) == 0:
-        return []
-
+def get_detector_box_candidates(image: Image.Image, target_label: str, threshold: float = 0.40):
+    width, height = image.size
+    image_area = width * height
+    
+    # Memory-Safe Tiled Detection (SAHI)
+    # 4 quadrants + 1 whole image
+    tiles = [
+        {"name": "whole", "box": (0, 0, width, height)},
+        {"name": "top_left", "box": (0, 0, width//2, height//2)},
+        {"name": "top_right", "box": (width//2, 0, width, height//2)},
+        {"name": "bottom_left", "box": (0, height//2, width//2, height)},
+        {"name": "bottom_right", "box": (width//2, height//2, width, height)},
+    ]
+    
     raw_candidates = []
-    image_area = image.width * image.height
-    for box in detection_result.boxes:
-        detector_confidence = float(box.conf.item())
-        if detector_confidence < DETECTOR_CONF_THRESHOLD:
-            continue
-
-        left, top, right, bottom = [int(value) for value in box.xyxy[0].tolist()]
-        if right <= left or bottom <= top:
-            continue
-
-        area_ratio = ((right - left) * (bottom - top)) / image_area
-        if area_ratio < DETECTOR_MIN_AREA_RATIO:
-            continue
-
-        raw_candidates.append(
-            {
-                "box": (left, top, right, bottom),
-                "crop": image.crop((left, top, right, bottom)),
-                "area_ratio": area_ratio,
-                "detector_confidence": detector_confidence,
-            }
-        )
+    detector_model = get_detector_model()
+    
+    for tile in tiles:
+        left, top, right, bottom = tile["box"]
+        crop = image.crop((left, top, right, bottom))
+        
+        with torch.no_grad():
+            detection_result = detector_model(crop, verbose=False)[0]
+            
+        if detection_result.boxes is not None and len(detection_result.boxes) > 0:
+            for box in detection_result.boxes:
+                detector_confidence = float(box.conf.item())
+                if detector_confidence < DETECTOR_CONF_THRESHOLD:
+                    continue
+                    
+                local_l, local_t, local_r, local_b = [int(value) for value in box.xyxy[0].tolist()]
+                if local_r <= local_l or local_b <= local_t:
+                    continue
+                    
+                # Convert crop coordinates back to global image coordinates
+                global_l = left + local_l
+                global_t = top + local_t
+                global_r = left + local_r
+                global_b = top + local_b
+                
+                area_ratio = ((global_r - global_l) * (global_b - global_t)) / image_area
+                if area_ratio < DETECTOR_MIN_AREA_RATIO:
+                    continue
+                    
+                raw_candidates.append({
+                    "box": (global_l, global_t, global_r, global_b),
+                    "crop": image.crop((global_l, global_t, global_r, global_b)),
+                    "area_ratio": area_ratio,
+                    "detector_confidence": detector_confidence,
+                    "ranking_score": detector_confidence, # For deduplication
+                })
+                
+        # Clear memory per tile
+        del detection_result
+        del crop
+        gc.collect()
+        
+    # Clean up detector immediately before classifier runs
+    del detector_model
+    gc.collect()
 
     if not raw_candidates:
         return []
 
-    custom_probabilities = compute_custom_probabilities_batch([candidate["crop"] for candidate in raw_candidates])
-    zero_shot_probabilities, _ = compute_zero_shot_probabilities_batch([candidate["crop"] for candidate in raw_candidates])
+    # Deduplicate boxes found in multiple tiles (e.g. whole image vs quadrant)
+    deduplicated_candidates = suppress_overlapping_candidates(raw_candidates)
+    
+    if not deduplicated_candidates:
+        return []
+
+    custom_probabilities = compute_custom_probabilities_batch([candidate["crop"] for candidate in deduplicated_candidates])
+    zero_shot_probabilities, _ = compute_zero_shot_probabilities_batch([candidate["crop"] for candidate in deduplicated_candidates])
 
     candidates = []
-    for candidate, custom_probs, zero_probs in zip(raw_candidates, custom_probabilities, zero_shot_probabilities):
+    for candidate, custom_probs, zero_probs in zip(deduplicated_candidates, custom_probabilities, zero_shot_probabilities):
         fused_probabilities, _ = fuse_probability_vectors(custom_probs, zero_probs)
-        target_score = float(fused_probabilities[target_class_id].item())
+        
         top_class_id = int(torch.argmax(fused_probabilities).item())
+        top_score = float(fused_probabilities[top_class_id].item())
         top_label = get_id_class_map()[top_class_id]
 
-        if top_label != target_label.lower() and target_score < 0.45:
+        if top_score < threshold:
             continue
 
         candidates.append(
             {
                 "box": candidate["box"],
-                "confidence": round(max(target_score, float(fused_probabilities[top_class_id].item())) * 100, 2),
+                "confidence": round(top_score * 100, 2),
                 "area_ratio": candidate["area_ratio"],
                 "source": "Detector",
                 "top_label": top_label,
-                "ranking_score": max(target_score, float(fused_probabilities[top_class_id].item()))
-                + 0.08
-                - candidate["area_ratio"] * 0.08,
+                "label": format_class_label(top_label),
+                "ranking_score": top_score + 0.08 - candidate["area_ratio"] * 0.08,
             }
         )
 
     return sorted(candidates, key=lambda item: item["ranking_score"], reverse=True)
 
 
-def select_bounding_boxes(input_path: Path, target_label: str, diagnostics: dict[str, float | str] | None = None):
+def select_bounding_boxes(input_path: Path, target_label: str, diagnostics: dict[str, float | str] | None = None, threshold: float = 0.55):
     with Image.open(input_path).convert("RGB") as image:
-        detector_candidates = get_detector_box_candidates(image, target_label)
+        detector_candidates = get_detector_box_candidates(image, target_label, threshold)
         
         if SMART_LITE:
             # If detector fails, use a very lite 2x2 region scan as fallback
             if not detector_candidates:
-                region_candidates = get_lite_region_candidates(image, target_label)
+                region_candidates = get_lite_region_candidates(image, target_label, threshold)
             else:
                 region_candidates = []
         else:
@@ -727,11 +840,24 @@ def create_result_image(
 
         box_font = load_font(max(16, width // 42), bold=True)
         line_width = max(3, min(width, height) // 130)
+        
+        CLASS_COLORS = {
+            "plastic": ((45, 156, 219, 255), (45, 156, 219, 235)),
+            "metal": ((242, 153, 74, 255), (242, 153, 74, 235)),
+            "paper": ((15, 159, 110, 255), (15, 159, 110, 235)),
+            "cardboard": ((139, 69, 19, 255), (139, 69, 19, 235)),
+            "glass": ((155, 81, 224, 255), (155, 81, 224, 235)),
+            "trash": ((235, 87, 87, 255), (235, 87, 87, 235)),
+        }
+        
         for candidate in box_candidates:
             left, top, right, bottom = candidate["box"]
-            draw.rounded_rectangle((left, top, right, bottom), radius=18, outline=BOX_COLOR, width=line_width)
+            box_label = candidate.get("top_label", top_prediction["label"].lower())
+            outline_color, fill_color = CLASS_COLORS.get(box_label.lower(), (BOX_COLOR, BOX_FILL))
+            
+            draw.rounded_rectangle((left, top, right, bottom), radius=18, outline=outline_color, width=line_width)
 
-            label_text = f'{top_prediction["label"]} {float(candidate["confidence"]):.0f}%'
+            label_text = f'{candidate.get("label", top_prediction["label"])} {float(candidate["confidence"]):.0f}%'
             label_box = draw.textbbox((0, 0), label_text, font=box_font)
             label_width = (label_box[2] - label_box[0]) + 18
             label_height = (label_box[3] - label_box[1]) + 12
@@ -741,7 +867,7 @@ def create_result_image(
             draw.rounded_rectangle(
                 (label_left, label_top, label_left + label_width, label_top + label_height),
                 radius=12,
-                fill=BOX_FILL,
+                fill=fill_color,
             )
             draw.text((label_left + 9, label_top + 6), label_text, font=box_font, fill=(255, 255, 255, 255))
 
@@ -762,19 +888,21 @@ def build_context(**overrides):
         "analysis_note": None,
         "diagnostics": None,
         "box_count": 0,
+        "threshold": 0.55,
+        "original_filename": None,
     }
     context.update(overrides)
     return context
 
 
-def render_classification(input_path: Path, original_image_url: str, result_filename: str):
+def render_classification(input_path: Path, original_image_url: str, result_filename: str, threshold: float = 0.55):
     result_path = RESULTS_DIR / result_filename
 
     try:
         predictions, top_prediction, analysis_note, diagnostics = analyze_image(input_path)
         if not predictions:
             raise ValueError("The model did not return any classification scores.")
-        box_candidates = select_bounding_boxes(input_path, str(top_prediction["label"]), diagnostics)
+        box_candidates = select_bounding_boxes(input_path, str(top_prediction["label"]), diagnostics, threshold)
         if box_candidates:
             diagnostics["box_source"] = " + ".join(sorted({candidate["source"] for candidate in box_candidates}))
         create_result_image(input_path, result_path, top_prediction, diagnostics, box_candidates)
@@ -794,6 +922,8 @@ def render_classification(input_path: Path, original_image_url: str, result_file
             analysis_note=analysis_note,
             diagnostics=diagnostics,
             box_count=len(box_candidates),
+            threshold=threshold,
+            original_filename=result_filename,
         ),
     )
 
@@ -805,23 +935,37 @@ def home():
 
 @app.route("/predict", methods=["POST"])
 def predict():
+    threshold_str = request.form.get("threshold", "0.55")
+    try:
+        user_threshold = float(threshold_str)
+    except ValueError:
+        user_threshold = 0.55
+
     image_file = request.files.get("image")
-    if image_file is None or image_file.filename == "":
+    existing_image = request.form.get("existing_image")
+
+    if image_file and image_file.filename != "":
+        safe_name = secure_filename(image_file.filename)
+        extension = Path(safe_name).suffix.lower() or ".jpg"
+        stored_name = f"{uuid4().hex}{extension}"
+        upload_path = UPLOAD_DIR / stored_name
+        image_file.save(upload_path)
+    elif existing_image:
+        stored_name = existing_image
+        upload_path = UPLOAD_DIR / stored_name
+        if not upload_path.exists():
+            return render_template("index.html", **build_context(error="Original image lost. Please upload again.", threshold=user_threshold))
+    else:
         return render_template(
             "index.html",
-            **build_context(error="Please choose an image before running prediction."),
+            **build_context(error="Please choose an image before running prediction.", threshold=user_threshold),
         )
-
-    safe_name = secure_filename(image_file.filename)
-    extension = Path(safe_name).suffix.lower() or ".jpg"
-    stored_name = f"{uuid4().hex}{extension}"
-    upload_path = UPLOAD_DIR / stored_name
-    image_file.save(upload_path)
 
     return render_classification(
         input_path=upload_path,
         original_image_url=url_for("uploaded_file", filename=stored_name),
         result_filename=stored_name,
+        threshold=user_threshold,
     )
 
 

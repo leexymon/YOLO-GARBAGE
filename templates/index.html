@@ -122,13 +122,7 @@
             font-weight: 300;
         }
 
-        .hero-footer {
-            display: flex; gap: 2rem; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 2rem;
-        }
-        
-        .stat { display: flex; flex-direction: column; }
-        .stat-val { font-family: 'Space Grotesk', sans-serif; font-size: 1.5rem; color: #fff; font-weight: 700;}
-        .stat-lbl { font-size: 0.8rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px;}
+
 
         /* Right Panel - Scrollable Content */
         .content-panel {
@@ -307,23 +301,9 @@
         
         <div class="hero-content">
             <h1>Vision<br><span>EcoSort</span></h1>
-            <p>Deploying advanced YOLOv8 neural networks for instantaneous, high-precision waste classification. Upload imagery to initiate sequence.</p>
+            <p>Advanced YOLOv8 vision system for real-time garbage classification. Upload an image to begin sorting.</p>
         </div>
 
-        <div class="hero-footer">
-            <div class="stat">
-                <span class="stat-val">v8.0</span>
-                <span class="stat-lbl">Architecture</span>
-            </div>
-            <div class="stat">
-                <span class="stat-val">CNN</span>
-                <span class="stat-lbl">Model Type</span>
-            </div>
-            <div class="stat">
-                <span class="stat-val">5</span>
-                <span class="stat-lbl">Classes</span>
-            </div>
-        </div>
     </aside>
 
     <!-- Right Panel: Interaction & Results -->
@@ -331,16 +311,27 @@
         
         <section class="interactive-card">
             <form id="uploadForm" action="{{ url_for('predict') }}" method="post" enctype="multipart/form-data">
+                {% if original_filename %}
+                    <input type="hidden" name="existing_image" value="{{ original_filename }}">
+                {% endif %}
                 <div class="drop-zone" id="dropZone">
                     <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
                     <h3 class="accent-font">Drop Image Here</h3>
                     <p>or click to browse local files</p>
                     <div class="file-name" id="fileNameDisplay"></div>
-                    <input id="fileInput" type="file" name="image" accept=".jpg,.jpeg,.png,.bmp" required>
+                    <input id="fileInput" type="file" name="image" accept=".jpg,.jpeg,.png,.bmp" {% if not original_filename %}required{% endif %}>
+                </div>
+                
+                <div style="margin-top: 2rem;">
+                    <label for="thresholdSlider" style="display: flex; justify-content: space-between; color: var(--text-dim); margin-bottom: 0.5rem; font-family: 'Space Grotesk', sans-serif; font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px;">
+                        <span>Confidence Threshold</span>
+                        <span id="thresholdValue">{{ (threshold * 100)|int }}%</span>
+                    </label>
+                    <input type="range" id="thresholdSlider" name="threshold" min="0.10" max="0.95" step="0.05" value="{{ threshold }}" style="width: 100%; accent-color: var(--accent); cursor: pointer;">
                 </div>
                 
                 <button type="submit" class="action-btn" id="submitBtn">
-                    <span>Initialize Scan</span>
+                    <span>{% if original_filename %}Rescan Existing Image{% else %}Initialize Scan{% endif %}</span>
                 </button>
             </form>
 
@@ -468,12 +459,20 @@
         }
 
         uploadForm.addEventListener('submit', function() {
-            if(fileInput.files.length > 0) {
+            if(fileInput.files.length > 0 || document.querySelector('input[name="existing_image"]')) {
                 loader.classList.add('active');
                 submitBtn.disabled = true;
                 submitBtn.querySelector('span').textContent = 'Processing...';
             }
         });
+
+        const thresholdSlider = document.getElementById('thresholdSlider');
+        const thresholdValue = document.getElementById('thresholdValue');
+        if (thresholdSlider && thresholdValue) {
+            thresholdSlider.addEventListener('input', (e) => {
+                thresholdValue.textContent = Math.round(e.target.value * 100) + '%';
+            });
+        }
 
         window.addEventListener('DOMContentLoaded', () => {
             const results = document.getElementById('resultsSection');
