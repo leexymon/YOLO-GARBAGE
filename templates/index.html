@@ -347,16 +347,7 @@
             <section class="interactive-card" id="resultsSection">
                 <div class="result-header">
                     <h2>Analysis Report</h2>
-                    {% if top_prediction %}
-                        <div class="huge-prediction accent-font">
-                            {{ top_prediction.label }} 
-                            <span>{{ '%.1f'|format(top_prediction.confidence) }}%</span>
-                        </div>
-                    {% else %}
-                        <div class="huge-prediction accent-font" style="color: var(--text-dim);">
-                            Unknown <span>0.0%</span>
-                        </div>
-                    {% endif %}
+
                     
                     {% if analysis_note %}
                         <p style="color: var(--text-dim); border-left: 2px solid var(--accent); padding-left: 1rem; margin-top: 1rem;">{{ analysis_note }}</p>
